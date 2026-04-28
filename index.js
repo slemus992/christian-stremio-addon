@@ -8,18 +8,20 @@ app.use(cors({ origin: "*" }));
 const TMDB_KEY = process.env.TMDB_API_KEY || "YOUR_TMDB_API_KEY_HERE";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 
-// Verified Christian studio company IDs from TMDB
-// 165435 = Angel Studios, 7405 = Affirm Films, 4490 = Pure Flix Entertainment
-// 30666 = Provident Films, 125330 = Graceway Media, 149154 = Fathom Events (faith)
-// Using pipe | = OR so any movie from ANY of these companies shows up
-const COMPANIES = "165435|7405|4490|30666|125330";
+// Verified Christian studio company IDs confirmed from TMDB URLs:
+// 6427  = Pure Flix Entertainment (themoviedb.org/company/6427)
+// 10156 = Affirm Films (themoviedb.org/company/10156)
+// 165435 = Angel Studios (themoviedb.org/company/165435)
+// Comma = AND (wrong), pipe | won't work in with_companies for OR
+// Correct approach: run separate queries per company and merge results
+const CHRISTIAN_COMPANY_IDS = [6427, 10156, 165435];
 
 // ─── MANIFEST ─────────────────────────────────────────────────────────────────
 const manifest = {
   id: "org.christian.faithcatalog",
-  version: "3.0.0",
+  version: "4.0.0",
   name: "Christian & Faith Catalog",
-  description: "Auto-updating Christian and faith-based movies and shows. Powered by Pure Flix, Affirm Films, Angel Studios & more.",
+  description: "Auto-updating Christian movies and shows from Pure Flix, Affirm Films, Angel Studios & more.",
   resources: ["catalog"],
   types: ["movie", "series"],
   idPrefixes: ["tmdb:"],
@@ -66,30 +68,46 @@ async function tmdbGet(path) {
   return res.json();
 }
 
-// All movies from Christian studios, sorted by popularity, paginated
+// Fetch from each company separately and merge, deduplicated by TMDB id
+async function fetchFromAllCompanies(mediaType, page, extraParams = "") {
+  const results = await Promise.all(
+    CHRISTIAN_COMPANY_IDS.map(companyId =>
+      tmdbGet(`/discover/${mediaType}?with_companies=${companyId}&sort_by=popularity.desc&page=${page}${extraParams}`)
+        .then(d => d.results || [])
+        .catch(() => [])
+    )
+  );
+  const seen = new Set();
+  const merged = [];
+  for (const batch of results) {
+    for (const item of batch) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+  }
+  // Re-sort merged results by popularity
+  merged.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+  return merged;
+}
+
 async function getMovies(page) {
-  const data = await tmdbGet(
-    `/discover/movie?with_companies=${COMPANIES}&sort_by=popularity.desc&page=${page}`
-  );
-  return (data.results || []).map(m => toMeta(m, "movie"));
+  const results = await fetchFromAllCompanies("movie", page);
+  return results.map(m => toMeta(m, "movie"));
 }
 
-// All series from Christian studios
 async function getSeries(page) {
-  const data = await tmdbGet(
-    `/discover/tv?with_companies=${COMPANIES}&sort_by=popularity.desc&page=${page}`
-  );
-  return (data.results || []).map(s => toMeta(s, "series"));
+  const results = await fetchFromAllCompanies("tv", page);
+  return results.map(s => toMeta(s, "series"));
 }
 
-// New releases in the last 6 months from Christian studios — auto-updates daily
 async function getNewReleases() {
   const today = new Date().toISOString().slice(0, 10);
   const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const data = await tmdbGet(
-    `/discover/movie?with_companies=${COMPANIES}&primary_release_date.gte=${sixMonthsAgo}&primary_release_date.lte=${today}&sort_by=release_date.desc&page=1`
-  );
-  return (data.results || []).map(m => toMeta(m, "movie"));
+  const extra = `&primary_release_date.gte=${sixMonthsAgo}&primary_release_date.lte=${today}&sort_by=release_date.desc`;
+  const results = await fetchFromAllCompanies("movie", 1, extra);
+  return results.map(m => toMeta(m, "movie"));
 }
 
 async function searchMovies(query) {
@@ -148,5 +166,5 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
-  console.log("Christian Stremio Addon v3 live on port " + PORT);
+  console.log("Christian Stremio Addon v4 live on port " + PORT);
 });
