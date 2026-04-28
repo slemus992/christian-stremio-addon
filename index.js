@@ -3,185 +3,162 @@ const cors = require("cors");
 const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: "*" }));
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-// Get a free TMDB API key at https://www.themoviedb.org/settings/api
 const TMDB_KEY = process.env.TMDB_API_KEY || "YOUR_TMDB_API_KEY_HERE";
 const TMDB_BASE = "https://api.themoviedb.org/3";
-
-// TMDB keyword IDs for Christian/faith content
-// 9673 = christian, 10714 = religion, 187056 = faith, 207317 = biblical
 const CHRISTIAN_KEYWORDS = "9673,10714,187056,207317";
 
-// Genres to optionally mix in: 18=Drama, 10751=Family, 10402=Music, 99=Documentary
-const FAMILY_GENRES = "18,10751,10402,99";
-
-// ─── MANIFEST ─────────────────────────────────────────────────────────────────
-const MANIFEST = {
-  id: "community.christian.catalog",
+// ─── MANIFEST (strict Stremio v4 format) ─────────────────────────────────────
+const manifest = {
+  id: "org.christian.faithcatalog",
   version: "1.0.0",
   name: "Christian & Faith Catalog",
-  description:
-    "Auto-updating catalog of Christian and faith-based movies and shows. New releases added automatically via TMDB.",
-  logo: "https://i.imgur.com/christian-cross-placeholder.png",
+  description: "Auto-updating catalog of Christian and faith-based movies and shows powered by TMDB.",
   resources: ["catalog"],
   types: ["movie", "series"],
+  idPrefixes: ["tmdb:"],
   catalogs: [
     {
+      id: "christian-movies",
       type: "movie",
-      id: "christian_movies",
       name: "Christian Movies",
-      extra: [{ name: "skip" }, { name: "search" }],
+      extra: [
+        { name: "skip", isRequired: false },
+        { name: "search", isRequired: false }
+      ]
     },
     {
+      id: "christian-series",
       type: "series",
-      id: "christian_series",
       name: "Christian Shows",
-      extra: [{ name: "skip" }, { name: "search" }],
+      extra: [
+        { name: "skip", isRequired: false },
+        { name: "search", isRequired: false }
+      ]
     },
     {
+      id: "christian-new",
       type: "movie",
-      id: "christian_movies_new",
       name: "New Christian Releases",
-      extra: [{ name: "skip" }],
-    },
-  ],
-  behaviorHints: {
-    adult: false,
-    p2pMediaServerSide: false,
-  },
+      extra: [
+        { name: "skip", isRequired: false }
+      ]
+    }
+  ]
 };
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
-function toStremioMeta(item, type) {
-  const isMovie = type === "movie";
+function toMeta(item, type) {
   return {
-    id: `tmdb:${item.id}`,
-    type: isMovie ? "movie" : "series",
-    name: item.title || item.name,
+    id: "tmdb:" + item.id,
+    type: type,
+    name: item.title || item.name || "Unknown",
     poster: item.poster_path
-      ? `https://image.tmdb.org/t/p/w500${item.poster_path}`
-      : null,
+      ? "https://image.tmdb.org/t/p/w500" + item.poster_path
+      : undefined,
     background: item.backdrop_path
-      ? `https://image.tmdb.org/t/p/original${item.backdrop_path}`
-      : null,
+      ? "https://image.tmdb.org/t/p/original" + item.backdrop_path
+      : undefined,
     description: item.overview || "",
     releaseInfo: (item.release_date || item.first_air_date || "").slice(0, 4),
-    imdbRating: item.vote_average ? item.vote_average.toFixed(1) : null,
-    genres: [],
+    imdbRating: item.vote_average ? String(item.vote_average.toFixed(1)) : undefined
   };
 }
 
-async function fetchChristianMovies(page = 1, search = null) {
-  if (search) {
-    const url = `${TMDB_BASE}/search/movie?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}&language=en-US&page=${page}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return (data.results || []).map((m) => toStremioMeta(m, "movie"));
-  }
-
-  const url =
-    `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}` +
-    `&with_keywords=${CHRISTIAN_KEYWORDS}` +
-    `&language=en-US` +
-    `&sort_by=popularity.desc` +
-    `&page=${page}` +
-    `&vote_count.gte=10`;
+async function tmdbFetch(url) {
   const res = await fetch(url);
-  const data = await res.json();
-  return (data.results || []).map((m) => toStremioMeta(m, "movie"));
+  if (!res.ok) throw new Error("TMDB error: " + res.status);
+  return res.json();
 }
 
-async function fetchChristianSeries(page = 1, search = null) {
+async function getMovies(page, search) {
+  let url;
   if (search) {
-    const url = `${TMDB_BASE}/search/tv?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}&language=en-US&page=${page}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return (data.results || []).map((s) => toStremioMeta(s, "series"));
+    url = `${TMDB_BASE}/search/movie?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}&language=en-US&page=${page}`;
+  } else {
+    url = `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&with_keywords=${CHRISTIAN_KEYWORDS}&language=en-US&sort_by=popularity.desc&vote_count.gte=10&page=${page}`;
   }
-
-  const url =
-    `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}` +
-    `&with_keywords=${CHRISTIAN_KEYWORDS}` +
-    `&language=en-US` +
-    `&sort_by=popularity.desc` +
-    `&page=${page}` +
-    `&vote_count.gte=5`;
-  const res = await fetch(url);
-  const data = await res.json();
-  return (data.results || []).map((s) => toStremioMeta(s, "series"));
+  const data = await tmdbFetch(url);
+  return (data.results || []).map(m => toMeta(m, "movie"));
 }
 
-async function fetchNewReleases() {
-  const today = new Date();
-  const sixMonthsAgo = new Date(today);
-  sixMonthsAgo.setMonth(today.getMonth() - 6);
-  const fromDate = sixMonthsAgo.toISOString().slice(0, 10);
-  const toDate = today.toISOString().slice(0, 10);
+async function getSeries(page, search) {
+  let url;
+  if (search) {
+    url = `${TMDB_BASE}/search/tv?api_key=${TMDB_KEY}&query=${encodeURIComponent(search)}&language=en-US&page=${page}`;
+  } else {
+    url = `${TMDB_BASE}/discover/tv?api_key=${TMDB_KEY}&with_keywords=${CHRISTIAN_KEYWORDS}&language=en-US&sort_by=popularity.desc&vote_count.gte=5&page=${page}`;
+  }
+  const data = await tmdbFetch(url);
+  return (data.results || []).map(s => toMeta(s, "series"));
+}
 
-  const url =
-    `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}` +
-    `&with_keywords=${CHRISTIAN_KEYWORDS}` +
-    `&primary_release_date.gte=${fromDate}` +
-    `&primary_release_date.lte=${toDate}` +
-    `&language=en-US` +
-    `&sort_by=release_date.desc` +
-    `&page=1`;
-  const res = await fetch(url);
-  const data = await res.json();
-  return (data.results || []).map((m) => toStremioMeta(m, "movie"));
+async function getNewReleases() {
+  const today = new Date().toISOString().slice(0, 10);
+  const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const url = `${TMDB_BASE}/discover/movie?api_key=${TMDB_KEY}&with_keywords=${CHRISTIAN_KEYWORDS}&primary_release_date.gte=${sixMonthsAgo}&primary_release_date.lte=${today}&language=en-US&sort_by=release_date.desc&page=1`;
+  const data = await tmdbFetch(url);
+  return (data.results || []).map(m => toMeta(m, "movie"));
 }
 
 // ─── ROUTES ───────────────────────────────────────────────────────────────────
-app.get("/manifest.json", (req, res) => {
-  res.json(MANIFEST);
+
+// Manifest
+app.get(["/manifest.json", "/manifest"], (req, res) => {
+  res.setHeader("Content-Type", "application/json");
+  res.json(manifest);
 });
 
-// Catalog endpoint: /catalog/:type/:id.json or /catalog/:type/:id/skip=N.json
-app.get("/catalog/:type/:id/:extras?.json", async (req, res) => {
+// Catalog route
+app.get("/catalog/:type/:id/:extra?.json", async (req, res) => {
   try {
     const { type, id } = req.params;
-    const extrasStr = req.params.extras || "";
+    const extraStr = req.params.extra || "";
 
-    // Parse extras (e.g. "skip=20" or "search=Jesus")
     const extras = {};
-    extrasStr.split("&").forEach((part) => {
-      const [k, v] = part.split("=");
-      if (k && v) extras[k] = decodeURIComponent(v);
+    extraStr.split("&").forEach(part => {
+      const eqIdx = part.indexOf("=");
+      if (eqIdx > -1) {
+        extras[part.slice(0, eqIdx)] = decodeURIComponent(part.slice(eqIdx + 1));
+      }
     });
 
-    const page = extras.skip ? Math.floor(parseInt(extras.skip) / 20) + 1 : 1;
+    const skip = parseInt(extras.skip || "0", 10);
+    const page = Math.floor(skip / 20) + 1;
     const search = extras.search || null;
 
     let metas = [];
 
-    if (id === "christian_movies") {
-      metas = await fetchChristianMovies(page, search);
-    } else if (id === "christian_series") {
-      metas = await fetchChristianSeries(page, search);
-    } else if (id === "christian_movies_new") {
-      metas = await fetchNewReleases();
+    if (id === "christian-movies") {
+      metas = await getMovies(page, search);
+    } else if (id === "christian-series") {
+      metas = await getSeries(page, search);
+    } else if (id === "christian-new") {
+      metas = await getNewReleases();
     }
 
+    res.setHeader("Content-Type", "application/json");
     res.json({ metas });
   } catch (err) {
-    console.error(err);
+    console.error("Catalog error:", err.message);
     res.status(500).json({ metas: [], error: err.message });
   }
 });
 
-// Health check
+// Root - shows your manifest URL
 app.get("/", (req, res) => {
+  const host = req.headers.host;
+  const proto = req.headers["x-forwarded-proto"] || req.protocol;
   res.json({
-    status: "ok",
-    addon: MANIFEST.name,
-    manifest_url: `${req.protocol}://${req.get("host")}/manifest.json`,
+    status: "running",
+    paste_this_into_aiometadata: `${proto}://${host}/manifest.json`
   });
 });
 
 const PORT = process.env.PORT || 7000;
 app.listen(PORT, () => {
-  console.log(`Christian Stremio Addon running on port ${PORT}`);
-  console.log(`Manifest: http://localhost:${PORT}/manifest.json`);
+  console.log("Christian Stremio Addon live on port " + PORT);
+  console.log("Manifest: http://localhost:" + PORT + "/manifest.json");
 });
