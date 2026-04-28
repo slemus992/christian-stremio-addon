@@ -8,7 +8,7 @@ app.use(cors({ origin: "*" }));
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const TMDB_KEY = process.env.TMDB_API_KEY || "YOUR_TMDB_API_KEY_HERE";
 const TMDB_BASE = "https://api.themoviedb.org/3";
-const CHRISTIAN_KEYWORDS = "9673,10714,187056,207317";
+const CHRISTIAN_KEYWORDS = "258703|273060|253695|9717|10714";
 
 // ─── MANIFEST (strict Stremio v4 format) ─────────────────────────────────────
 const manifest = {
